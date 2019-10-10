@@ -94,14 +94,6 @@ class Network(object):
 
 
 
-def repackage_hidden(h):
-    """Wraps hidden states in new Tensors, to detach them from their history."""
-    if isinstance(h, torch.Tensor):
-        return h.detach()
-    else:
-        return tuple(repackage_hidden(v) for v in h)
-
-
 class LstmNetwork(Network):
     '''Framework for LSTM
     '''
@@ -137,20 +129,15 @@ class LstmNetwork(Network):
         hidden = None
         i = 0
         for epoch in range(max_epoch):
-            if i % 50 == 0:
-                print("epoch:", i)
+            print("epoch:", i)
             i += 1
             for batch_x, batch_y in self.batch_iter(x, y, batch_size):
-                #if self.squeeze_1st_dim:
-                #    batch_x, batch_y = batch_x[0], batch_y[0]
-                batch_x = batch_x.squeeze(0)
-                batch_y = batch_y.squeeze(0)
+                if self.squeeze_1st_dim:
+                    batch_x, batch_y = batch_x[0], batch_y[0]
                 self.optimizer.zero_grad() #梯度清零，不叠加
-                pred_y, h = self.mod(batch_x, hidden)
-                hidden = repackage_hidden(h)
+                pred_y, hidden = self.mod(batch_x, hidden)
                 loss = self.loss_func(pred_y, batch_y)
-                #loss.backward(retain_graph=True)
-                loss.backward()
+                loss.backward(retain_graph=True)
                 self.optimizer.step()
             if gossip and epoch % 100 == 0:
                 print("epoch-", epoch, " : ", loss)
@@ -159,10 +146,9 @@ class LstmNetwork(Network):
     def predict(self, x):
         self.mod.eval()
         x = self.in_scaler.transform(x)
-        x = t.Tensor(x).unsqueeze(0).to(self.device)
-        y_, h = self.mod(x, None)
+        x = t.Tensor(x).to(self.device)
+        y_ = self.mod(x, None)
         y_ = y_.detach().cpu().numpy()
-        h = (hi.detach().cpu().numpy() for hi in h)
 
         if self.reshape_y:
             y_ = y_.squeeze()
@@ -171,7 +157,7 @@ class LstmNetwork(Network):
         if self.predict_trans:
             y_ = self.predict_trans(y_)
 
-        return y_, h
+        return y_
 
 
 
@@ -213,26 +199,6 @@ class FcBlock(nn.Module):
         return self.seq(input_ftrs)
 
 
-class SimpleLstmBlock(nn.Module):
-    def __init__(self, sz_input, sz_output, sz_lstm_in, sz_lstm_out, layers=1, drop_rates=None):
-        super(LstmBlock, self).__init__()
-        self.fc1 = nn.Linear(sz_input, sz_lstm_in)
-        self.fc2 = nn.Linear(sz_lstm_out, sz_output)
-        self.rnn = nn.LSTM(input_size=sz_lstm_in, hidden_size=sz_lstm_out, num_layers=layers, batch_first=True)
-
-
-    def forward(self, input_ftrs, hidden):
-        #input_ftrs: batch_size * seq_size * ftrs_szie
-        #b, q, f = input_ftrs.size()
-        #x = input_ftrs.view(b*q, f)
-        x = self.fc1(input_ftrs)
-        #x = x.view(b, q, -1)
-        x, h = self.rnn(x, hidden)
-        x = self.fc2(x)
-        return x, h
-
-
-
 class LstmBlock(nn.Module):
     def __init__(self, sz_input, sz_output, sz_hidden1, sz_hidden2, sz_lstm_in, sz_lstm_out, layers=1, drop_rates=None):
         super(LstmBlock, self).__init__()
@@ -250,6 +216,8 @@ class LstmBlock(nn.Module):
         x, h = self.rnn(x, hidden)
         x = self.fc2(x)
         return x, h
+
+
 
 
 class MultiTaskBlock(nn.Module):
